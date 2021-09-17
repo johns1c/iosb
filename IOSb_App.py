@@ -147,22 +147,55 @@ class IOSb_Open(Base_Open):
         print(f"Event handler 'OnPathChosen'  {chosen_backup} ")
 
 
-        def rbp(  manifest)    : 
+
+        def rpl( xml_file ) :
+            import plistlib 
+            try:
+                iplist = plistlib.load(open(xml_file,'rb'))
+                return iplist
+                
+                wanted = ['Build Version', 'Device Name', 'Display Name', 'GUID', 'ICCID', 'IMEI',
+                'Last Backup Date', 'MEID', 'Phone Number', 'Product Name', 'Product Type',
+                'Product Version', 'Serial Number', 'zzzSync Settings', 'Target Identifier',
+                'Target Type', 'Unique Identifier', 'zziTunes Files', 'zzziTunes Settings', 
+                'iTunes Version']
+                
+                return dict( [( k , plist[k] ) for k  in plist if k in wanted ] )
+                
+            except (plistlib.InvalidFileException)as e:
+                print ( "info.plist Not an xml  plist :", e )
+                return dict()
+
+        
+        def rbp(binary_file)    : 
             """ dict of status values in printable form """
             try:
-                plist = readPlist(manifest)
+                plist = readPlist(binary_file)
                 return dict([(k , f'{plist[k]}' ) for k in sorted(plist)])  
             except (InvalidPlistException, NotBinaryPlistException)as e:
                 print ( "Not a plist :", e )
+                return { 'Device Name'  : '????' }  
     
-        spl = os.path.join( chosen_backup , 'Status.plist' )
-        status = rbp( spl) 
+        status_file  = os.path.join( chosen_backup , 'Status.plist' )
+        status = rbp( status_file ) 
         
         self.date_text.Value    = status[ 'Date' ] 
         self.ifb_text.Value     = status[ 'IsFullBackup' ] 
         self.ss_text.Value      = status[ 'SnapshotState' ] 
         self.uuid_text.Value    = status[ 'UUID' ]
         self.version_text.Value = status[ 'Version']
+        
+        
+        info_file = os.path.join( chosen_backup , 'Info.plist' )
+        info = rpl( info_file) 
+        print( info ) 
+        
+        self.device_name_text.Value     = info.get( 'Device Name'     )
+        self.serial_number_text.Value   = info.get( 'Serial Number'   )
+        self.product_version_text.Value = info.get( 'Product Version' )
+        self.product_name_text.Value    = info.get( 'Product Name'    )
+        self.imei_text.Value            = info.get(  'IMEI' ) 
+        
         
         print("Event handler 'DoPopen' not is a work in progress!")
         event.Skip()

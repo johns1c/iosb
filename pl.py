@@ -27,7 +27,11 @@ def rip(  ifile ) :
     try:
         plist = plistlib.load(open(ifile,'rb'))
         
-        wanted = ['Build Version', 'Device Name', 'Display Name', 'GUID', 'ICCID', 'IMEI',  'Last Backup Date', 'MEID', 'Phone Number', 'Product Name', 'Product Type', 'Product Version', 'Serial Number', 'zzzSync Settings', 'Target Identifier', 'Target Type', 'Unique Identifier', 'zziTunes Files', 'zzziTunes Settings', 'iTunes Version']
+        wanted = ['Build Version', 'Device Name', 'Display Name', 'GUID', 'ICCID', 'IMEI',
+        'Last Backup Date', 'MEID', 'Phone Number', 'Product Name', 'Product Type',
+        'Product Version', 'Serial Number', 'zzzSync Settings', 'Target Identifier',
+        'Target Type', 'Unique Identifier', 'zziTunes Files', 'zzziTunes Settings', 
+        'iTunes Version']
         
         [ print ( k , plist[k] ) for k  in plist if k in wanted ]
 
