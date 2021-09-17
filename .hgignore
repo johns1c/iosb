@@ -1,0 +1,7 @@
+syntax: glob
+*.pyc
+*.bak
+.DS_Store
+dist
+rubbish
+SyncToy*
