@@ -27,6 +27,78 @@ class IOSb_View(Base_View):
         #self.window_2 = FileList(self, wx.ID_ANY)
         #self.window_3 = IOSb_File_Properties(self, wx.ID_ANY)
 
+    def OnFileRClick(self, event):
+    
+        self.currentItemF = self.file_list.GetFirstSelected()
+        
+        self.current_fileID       = self.file_list.GetItemText( self.currentItemF , 0 )
+        self.current_relativePath = self.file_list.GetItemText( self.currentItemF , 1 )
+        # 
+        # for old versions the directory is just the backup path
+        # for new versions it is split according to the first two characters of the id 
+        
+        self.current_file_dir     = os.path.join(  self.backup , self.current_fileID[:2] )
+        self.current_file_path    = os.path.join( self.current_file_dir , self.current_fileID ) 
+        self.current_file_exists  = os.path.exists( self.current_file_path )
+        print( f'chosen file is {self.current_file_path} ' ) 
+        self.current_file_orig = os.path.join(self.currentDomain, self.current_relativePath )
+        print( f'        target {self.current_file_orig} ' ) 
+        
+        self.item_popup = wx.Menu()
+        for entry in ["Clip", "Move", "Copy", "Delete", "Edit", "View", "Text"]:
+            menu_item = self.item_popup.Append(-1, entry)
+            self.Bind(wx.EVT_MENU, self.OnMenuAction, menu_item)
+        # Show menu
+        self.PopupMenu(self.item_popup)
+        #self.contextmenu.Destroy()
+
+    def OnMenuAction(self, event):
+        ''' Determine menu event and act upon it
+        '''
+        menu_item = self.item_popup.FindItemById(event.GetId())
+        menu_item_text = menu_item.GetItemLabelText()
+        self.menu_item_text = menu_item.GetItemLabelText()
+
+        Actions = dict((("Clip", self.DoClip), ("Copy", self.DoCMD),
+                        ("Move", self.DoCMD), ("Delete", self.DoCMD),
+                        ("Edit", self.DoNothing), ("View", self.DoNothing) ,
+                        ("Text", self.DoNothing)))
+
+        Action = Actions[menu_item_text]
+        Action(event)
+        
+    def DoNothing(self, evt):
+        print("Nothing doing ")
+
+    def DoCMD(self, event):  # wxGlade: Cat_Frame.<event_handler>
+        event.Skip()
+
+        # display / entry fields
+        # self.Source_File      (readonly) name of source file within source directory
+        # self.Source_Location  (readonly) directory in which source file exists
+        # self.DB_location      (readonly) the location information held in the catalog for a file with this name (if exists)
+
+        MoveDialog = Catalog_Move(None, 150, ActionType=self.menu_item_text)
+        MoveDialog.SetSource(self.fpath)
+        MoveDialog.Show(True)
+
+    def DoClip(self, event):
+        """ put full path to backed up file onto clipboard """
+        print( 'Clipping file path...' ) 
+
+        list_separator = "\n"
+        data = wx.TextDataObject()
+        if isinstance( self.current_file_path , list ) :
+            data.SetText(list_separator.join( self.fpath ))
+        else:
+            data.SetText(self.current_file_path)
+        if wx.TheClipboard.Open():
+            wx.TheClipboard.SetData(data)
+            wx.TheClipboard.Close()
+        else:
+            wx.MessageBox("Unable to open the clipboard", "Error")
+
+        event.Skip()
 
     def DoOpen(self, event):
     
@@ -41,14 +113,46 @@ class IOSb_View(Base_View):
         # query db to find corresponding files
         # populate file list widget 
         
+        
+        def get_file_props(  props ) :
+            
+            from io import BytesIO
+            with BytesIO(props) as props_f:
+                props_plist = readPlist( props_f ) 
+                
+                zu = props_plist['$objects'][1]['LastModified']
+                zs = props_plist['$objects'][1]['LastStatusChange']
+                zc = props_plist['$objects'][1]['Birth']
+                
+                zu =  datetime.datetime.utcfromtimestamp(zu).isoformat()
+                zs =  datetime.datetime.utcfromtimestamp(zs).isoformat()
+                zc =  datetime.datetime.utcfromtimestamp(zc).isoformat()
+                
+                props_plist['$objects'][1]['LastModified']  = zu
+                props_plist['$objects'][1]['LastStatusChange'] = zs
+                props_plist['$objects'][1]['Birth'] = zc
+                
+            return props_plist 
+           
+        #############################################################################################
         self.currentItem = self.domain_list.GetFirstSelected()
         self.currentDomain  = self.domain_list.GetItemText( self.currentItem , 0 )
-        qry = "select * from files where domain = ? "
+        
+        # obtain files under this domain 
+        qry = "select fileID, relativePath, file  from files where domain = ? and flags = 1 order by relativePath"
         cur = self.db.cursor()
         cur.execute(qry, ( self.currentDomain, )) 
         
+        self.file_list.DeleteAllItems()
+        
         for row in cur.fetchall() :
-            self.file_list.Append(row[0:3]) 
+            props_plist = get_file_props( row[2] ) 
+            last_modified      =  props_plist['$objects'][1]['LastModified'] 
+            last_status_change =  props_plist['$objects'][1]['LastStatusChange'] 
+            birth              =  props_plist['$objects'][1]['Birth'] 
+
+            display_row = [  row[0] , row[1] , birth  , last_status_change , last_modified ]
+            self.file_list.Append(display_row) 
 
         
     def DoRead( self , bkup ) :
@@ -188,7 +292,7 @@ class IOSb_Open(Base_Open):
         
         info_file = os.path.join( chosen_backup , 'Info.plist' )
         info = rpl( info_file) 
-        print( info ) 
+       
         
         self.device_name_text.Value     = info.get( 'Device Name'     )
         self.serial_number_text.Value   = info.get( 'Serial Number'   )
