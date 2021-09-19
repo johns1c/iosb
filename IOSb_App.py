@@ -14,6 +14,7 @@ import wx
 from IOSb_Base import IOSb_View as Base_View 
 from IOSb_Base import IOSb_Open as Base_Open 
 from biplist import *
+import hashlib
 
 
 
@@ -139,34 +140,64 @@ class IOSb_View(Base_View):
         self.currentDomain  = self.domain_list.GetItemText( self.currentItem , 0 )
         
         # obtain files under this domain 
-        qry = "select fileID, relativePath, file  from files where domain = ? and flags = 1 order by relativePath"
-        cur = self.db.cursor()
-        cur.execute(qry, ( self.currentDomain, )) 
         
         self.file_list.DeleteAllItems()
-        
-        for row in cur.fetchall() :
-            props_plist = get_file_props( row[2] ) 
-            last_modified      =  props_plist['$objects'][1]['LastModified'] 
-            last_status_change =  props_plist['$objects'][1]['LastStatusChange'] 
-            birth              =  props_plist['$objects'][1]['Birth'] 
 
-            display_row = [  row[0] , row[1] , birth  , last_status_change , last_modified ]
-            self.file_list.Append(display_row) 
+        if os.path.exists( self.old_manifest ) :
+            entries = 0 
+            for file_info in read_mbdb( self.old_manifest ) :
+            
+                if file_info['domain'].decode()  == self.currentDomain :  
+                    entries += 1 
+                    display_row = [  file_info['fileID'], file_info['relativePath']  , file_info['ctime']   , file_info['atime'] , file_info['mtime']  ]
+                    self.file_list.Append(display_row) 
+               
+            print( f'{entries=} ') 
+        
+        
+        else :
+            qry = "select fileID, relativePath, file  from files where domain = ? and flags = 1 order by relativePath"
+            cur = self.db.cursor()
+            cur.execute(qry, ( self.currentDomain, )) 
+            
+            self.file_list.DeleteAllItems()
+            
+            for row in cur.fetchall() :
+                props_plist = get_file_props( row[2] ) 
+                last_modified      =  props_plist['$objects'][1]['LastModified'] 
+                last_status_change =  props_plist['$objects'][1]['LastStatusChange'] 
+                birth              =  props_plist['$objects'][1]['Birth'] 
+
+                display_row = [  row[0] , row[1] , birth  , last_status_change , last_modified ]
+                self.file_list.Append(display_row) 
 
         
     def DoRead( self , bkup ) :
         self.Directory_text.SetLabelText( bkup) 
 
         print ( 'Now...' )      
+        self.domain_list.DeleteAllItems() 
 
         self.backup = bkup 
         self.manifest = os.path.join( bkup , 'Manifest.db' ) 
         self.old_manifest = os.path.join( bkup , 'Manifest.mbdb' ) 
     
         if os.path.exists( self.old_manifest ) :
-            print( 'old manifest' ) 
-            return False
+        
+            entries  = 0
+            domains = set()
+            for file_info in read_mbdb( self.old_manifest ) :  
+                if entries == 123 :
+                     print(  file_info )
+                domains.add( file_info['domain' ] )
+                entries += 1 
+                
+            print( f'{entries=}   {len(domains)=}') 
+                
+            rc = 0 
+            for d in sorted(domains) :
+                self.domain_list.Append((d.decode(),))  
+                rc += 1
             
         elif os.path.exists( self.manifest) :
             self.db = sqlite3.connect(self.manifest)
@@ -175,10 +206,10 @@ class IOSb_View(Base_View):
             cur = self.db.cursor()
             cur.execute(qry) 
             
-        rc = 0    
-        for row in cur.fetchall() :
-            self.domain_list.Append(row)  
-            rc += 1      
+            rc = 0    
+            for row in cur.fetchall() :
+                self.domain_list.Append(row)  
+                rc += 1      
 
         print( f'{rc} domains ' )             
                  
@@ -304,7 +335,73 @@ class IOSb_Open(Base_Open):
         print("Event handler 'DoPopen' not is a work in progress!")
         event.Skip()
 
+def read_mbdb( mbdb_file ) :
 
+    with open(mbdb_file, 'rb' ) as mf :
+    
+        def get_varchar():
+        
+            length = get_int(2) 
+            if length == 65535 :   
+                return None 
+            data = mf.read(length) 
+            if len(data) != length :
+                print( f'data read {len(data)}  asked for {length} ' ) 
+            return data
+            
+        def get_int( length ) :
+            data = mf.read(length) 
+            if len(data) != length :
+                print( f'data read {len(data)}  asked for {length} ' ) 
+
+            ival = 0
+            for b in data :
+                ival = ( ival << 8 )+ b 
+            return ival 
+            
+        hdr = mf.read(4) 
+        assert hdr == b"mbdb"
+        not_eof = True 
+        ver = mf.read(2) 
+        
+        while ( mf.peek(2) ) :
+            print( mf.peek( 8) [:8] ) 
+            fileinfo = {}
+            fileinfo['domain']        = get_varchar()
+            
+            fileinfo['relativePath']  = get_varchar()
+            fileinfo['linktarget']    = get_varchar()
+            fileinfo['datahash']      = get_varchar()
+            fileinfo['encryptionKey'] = get_varchar()    
+            fileinfo['mode']          = get_int(2)
+            fileinfo['inode1']        = get_int(4)
+            fileinfo['inode2']        = get_int(4)
+            fileinfo['userid']        = get_int(4)
+            fileinfo['groupid']       = get_int(4)
+            fileinfo['mtime']         = get_int(4)
+            fileinfo['atime']         = get_int(4)
+            fileinfo['ctime']         = get_int(4)
+            fileinfo['filelen']       = get_int(8)
+            fileinfo['flag']          = get_int(1)
+            fileinfo['numprops']      = get_int(1)
+            fileinfo['properties'] = {}
+            for ii in range(fileinfo['numprops']):
+                propname = get_varchar()
+                propval  = get_varchar()
+                fileinfo['properties'][propname] = propval
+            fileinfo['mtime'] = datetime.datetime.utcfromtimestamp(fileinfo['mtime']).isoformat()
+            fileinfo['atime'] = datetime.datetime.utcfromtimestamp(fileinfo['atime']).isoformat()
+            fileinfo['ctime'] = datetime.datetime.utcfromtimestamp(fileinfo['ctime']).isoformat()
+               
+            fullname  = fileinfo['domain' ] + b'-' +  fileinfo['relativePath'] 
+            sha_1 = hashlib.sha1(fullname)
+            fileID =  sha_1.hexdigest()
+            fileinfo[ 'fileID' ] = fileID 
+  
+            yield fileinfo
+ 
+        return # fini      
+    
 class Cat_Move(wx.Dialog):
     def __init__(self, *args, **kwds):
         kwds["style"] = kwds.get("style", 0) | wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER
