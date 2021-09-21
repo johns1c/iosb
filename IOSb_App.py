@@ -226,9 +226,14 @@ class IOSb_View(Base_View):
         event.Skip()
 
     def DoQuit(self, event):
-        print("Overridden Event handler 'DoQuit' not implemented!")
+        # save state here 
+        self.Destroy()
+        wx.CallAfter(wx.GetApp().ExitMainLoop)
         event.Skip()
-
+       
+        
+        
+##########################################################
 
     def DoHelp(self, event):
         print("Overridden Event handler 'DoHelp' not implemented!")
