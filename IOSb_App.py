@@ -17,6 +17,54 @@ from IOSb_Base import IOSb_Query as Base_Query
 from biplist import *
 import hashlib
 
+def like( test_str , pattern ) :
+    """ sql like pattern matching 
+        parameters
+             string to be matched  
+             wild carded pattern string
+             
+         sql _ is .
+         sql % is .* 
+         certain characters need escaping
+      
+         regex start and end of string are ^ and $ 
+         regex starting ^.*  or ending .*$ can be simplified 
+    """
+    import re 
+    REGEX_SPECIAL_CHARACTERS = r'\.*$^|?+(){}[]'
+    regex = ['^',] 
+    
+    for character in pattern :
+
+        if character == '_' :
+            regex.append( '.'  )
+        elif character  == r'%' :
+            regex.append( '.*' )
+        elif character  in  REGEX_SPECIAL_CHARACTERS :
+            regex.append( '\\' ) 
+            regex.append( character ) 
+        else :
+            regex.append(character) 
+            
+    regex.append( '$' ) 
+    
+    regex = ''.join(regex)
+    
+
+    if regex.startswith( '^.*' ) and False :
+        regex = regex[3:]
+
+    if regex.endswith( '.*$' ) and False :
+        regex = regex[:-3]      
+
+    
+    pattern = re.compile(regex)
+    matched = pattern.match( test_str )
+    #print( regex , matched ) 
+    if matched :
+        return True 
+    else :
+        return False     
 
 
 
@@ -40,8 +88,10 @@ class IOSb_View(Base_View):
         # 
         # for old versions the directory is just the backup path
         # for new versions it is split according to the first two characters of the id 
-        
-        self.current_file_dir     = os.path.join(  self.backup , self.current_fileID[:2] )
+        if int(self.current_version.split('.')[0])  > 2 :
+            self.current_file_dir     = os.path.join(  self.backup , self.current_fileID[:2] )
+        else :        
+            self.current_file_dir     = self.backup 
         self.current_file_path    = os.path.join( self.current_file_dir , self.current_fileID ) 
         self.current_file_exists  = os.path.exists( self.current_file_path )
         print( f'chosen file is {self.current_file_path} ' ) 
@@ -106,11 +156,10 @@ class IOSb_View(Base_View):
 
     def DoOpen(self, event):
     
-        print("Overridden Event handler 'DoOpen' is a work in progress")
-    
         OpenDialog = IOSb_Open(None, 150)
         OpenDialog.Show(True)
         event.Skip()
+        
     def On_Select_Domain( self, event )  :
     
         # determine selected domain
@@ -149,19 +198,37 @@ class IOSb_View(Base_View):
         if os.path.exists( self.old_manifest ) :
             entries = 0 
             for file_info in read_mbdb( self.old_manifest ) :
-            
-                if file_info['domain'].decode()  == self.currentDomain :  
+                
+                wanted = False
+                if file_info['domain'].decode()  != self.currentDomain :  
+                    wanted = False
+                elif not self.apply_query :
+                    wanted = True 
+                elif self.file_name_filter == '' :
+                    wanted = True
+                elif  like( file_info['relativePath'].decode( 'UTF-8' )  , self.file_name_filter ) :
+                    wanted = True
+                else :
+                    wanted = False
+                        
+                if wanted :        
                     entries += 1 
-                    display_row = [  file_info['fileID'], file_info['relativePath']  , file_info['ctime']   , file_info['atime'] , file_info['mtime']  ]
+                    display_row = [  file_info['fileID'], file_info['relativePath'].decode('UTF-8' )   , file_info['ctime']   , file_info['atime'] , file_info['mtime']  ]
                     self.file_list.Append(display_row) 
                
             print( f'{entries=} ') 
         
         
         else :
-            qry = "select fileID, relativePath, file  from files where domain = ? and flags = 1 order by relativePath"
+            if self.apply_query and self.file_name_filter != ''  :
+                qry = "select fileID, relativePath, file  from files where domain = ? and flags = 1 and relativePath like  ? order by relativePath"
+                bind_vars = ( self.currentDomain,  self.file_name_filter ) 
+            else :
+                qry = "select fileID, relativePath, file  from files where domain = ? and flags = 1 order by relativePath"
+                bind_vars = ( self.currentDomain, ) 
+
             cur = self.db.cursor()
-            cur.execute(qry, ( self.currentDomain, )) 
+            cur.execute(qry, bind_vars) 
             
             self.file_list.DeleteAllItems()
             
@@ -175,26 +242,52 @@ class IOSb_View(Base_View):
                 self.file_list.Append(display_row) 
 
         
-    def DoRead( self , bkup , apply_query=False  ) :
+    def DoRead( self , bkup , apply_query=False , version=None ) :
+    
+        self.apply_query = apply_query 
+        
+        
+        if version is not None :
+            self.current_version = version
+        elif self.backup == bkup :
+            pass
+        
         self.Directory_text.SetLabelText( bkup) 
 
         print ( 'Now...' )      
         self.domain_list.DeleteAllItems() 
-
+        self.file_list.DeleteAllItems() 
         self.backup = bkup 
         self.manifest = os.path.join( bkup , 'Manifest.db' ) 
         self.old_manifest = os.path.join( bkup , 'Manifest.mbdb' ) 
     
         if os.path.exists( self.old_manifest ) :
         
+           
             entries  = 0
             domains = set()
             for file_info in read_mbdb( self.old_manifest ) :  
             
-                if (not apply_query) or  like(file_info['domain' ]  , self.domain_filter ) :
+                # all domains, matching domains, matching domains with matching files 
+                
+                wanted = False
+                
+                if not apply_query : 
+                    wanted  = True 
+                    
+                elif not like(file_info['domain' ].decode( 'UTF-8' )    , self.domain_filter ) :
+                    wanted  = False
+                elif self.file_name_filter == ''  :
+                    wanted = True
+                elif like(file_info['relativePath' ].decode( 'UTF-8' )   , self.file_name_filter ) :
+                    wanted = True
+                else :
+                    wanted = False
+                    
+                if wanted :
                     domains.add( file_info['domain' ] )
                     entries += 1 
-                
+                    
             print( f'{entries=}   {len(domains)=}') 
                 
             rc = 0 
@@ -204,10 +297,17 @@ class IOSb_View(Base_View):
             
         elif os.path.exists( self.manifest) :
             self.db = sqlite3.connect(self.manifest)
+            
             #db.create_function("part1", 1, part1)
-            if apply_query :
+            # selected domains having matching files, selected domains, all domains 
+            if apply_query and self.file_name_filter == '' :
                 qry = 'select distinct domain from files where domain like ? order by 1 ; '
                 qry_bind_vars = ( self.domain_filter , ) 
+            elif apply_query   :  
+                qry = """select distinct domain  from  files 
+                         where (domain like ? ) and (relativePath like ?) and (flags = 1) 
+                         order by 1 ;""" 
+                qry_bind_vars = ( self.domain_filter , self.file_name_filter ) 
             else :
                 qry = 'select distinct domain from files order by 1 ; '
                 qry_bind_vars = tuple() 
@@ -262,6 +362,10 @@ class IOSb_View(Base_View):
             print( 'some error picking up filter vars ' ) 
         finally :
             event.Skip()
+            
+    def OnQueryAll(self, event):
+        self.DoRead( self.backup , apply_query=False ) 
+        event.Skip()
     
     
     def DoExport(self, event):
@@ -300,7 +404,6 @@ class IOSb_Open(Base_Open):
         Base_Open.__init__(self, *args, **kwds)
         self.SetSize((620, 480))
         self.SetTitle("Backup Directory List /  Open")
-        #self.DoPopen(1) 
 
     def DoBrowsePath(self, event):
         print("Event handler 'DoBrowsePath' not implemented!")
@@ -314,10 +417,11 @@ class IOSb_Open(Base_Open):
     def DoOpen(self, event):
     
         chosen_backup = self.path_combo.GetValue()
+        chosen_version = self.version_text.GetValue()
         
         zapp = wx.GetApp() 
         zview = zapp.GetTopWindow() 
-        zview.DoRead( chosen_backup ) 
+        zview.DoRead( chosen_backup , version=chosen_version ) 
         
         event.Skip()
 
@@ -335,12 +439,10 @@ class IOSb_Open(Base_Open):
         self.path_combo.Clear()
         self.path_combo.AppendItems(backup_list)
 
-
     def OnPathChosen(self, event):
+    
         chosen_backup = self.path_combo.GetValue()
         print(f"Event handler 'OnPathChosen'  {chosen_backup} ")
-
-
 
         def rpl( xml_file ) :
             import plistlib 
@@ -371,14 +473,24 @@ class IOSb_Open(Base_Open):
                 return { 'Device Name'  : '????' }  
     
         status_file  = os.path.join( chosen_backup , 'Status.plist' )
-        status = rbp( status_file ) 
         
-        self.date_text.Value    = status[ 'Date' ] 
-        self.ifb_text.Value     = status[ 'IsFullBackup' ] 
-        self.ss_text.Value      = status[ 'SnapshotState' ] 
-        self.uuid_text.Value    = status[ 'UUID' ]
-        self.version_text.Value = status[ 'Version']
+        try :
+            self.date_text.Clear()
+            self.ifb_text.Clear()
+            self.ss_text.Clear()
+            self.uuid_text.Clear()
+            self.version_text.Clear()
+            
+            status = rbp( status_file ) 
         
+            self.date_text.Value    = status[ 'Date' ] 
+            self.ifb_text.Value     = status[ 'IsFullBackup' ] 
+            self.ss_text.Value      = status[ 'SnapshotState' ] 
+            self.uuid_text.Value    = status[ 'UUID' ]
+            self.version_text.Value = status[ 'Version']
+        
+        except :
+            pass 
         
         info_file = os.path.join( chosen_backup , 'Info.plist' )
         info = rpl( info_file) 
@@ -394,7 +506,7 @@ class IOSb_Open(Base_Open):
         print("Event handler 'DoPopen' not is a work in progress!")
         event.Skip()
 
-def read_mbdb( mbdb_file ) :
+def read_mbdb( mbdb_file) :
 
     with open(mbdb_file, 'rb' ) as mf :
     
@@ -424,7 +536,7 @@ def read_mbdb( mbdb_file ) :
         ver = mf.read(2) 
         
         while ( mf.peek(2) ) :
-            print( mf.peek( 8) [:8] ) 
+            
             fileinfo = {}
             fileinfo['domain']        = get_varchar()
             
