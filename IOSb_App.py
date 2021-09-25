@@ -74,11 +74,23 @@ class IOSb_View(Base_View):
         Base_View.__init__(self, *args, **kwds)
         self.SetTitle("IOS Backup viewer")
         self.Query_Status = None 
+        
+        self.MenuDisplay( False ) 
 
         #self.window_1 = DomainList(self, wx.ID_ANY)
         #self.window_2 = FileList(self, wx.ID_ANY)
         #self.window_3 = IOSb_File_Properties(self, wx.ID_ANY)
-
+        
+    def MenuDisplay( self , show  ) :
+        self.Main_Frame_Menubar.Export.Enable( show ) 
+        self.Main_Frame_Menubar.Import.Enable( show )  
+        self.Main_Frame_Menubar.QueryCncl.Enable( show )  
+        self.Main_Frame_Menubar.QueryEnter.Enable( show ) 
+        self.Main_Frame_Menubar.QueryExec.Enable( show )  
+        self.Main_Frame_Menubar.QueryPrevious.Enable( show )  
+        self.Main_Frame_Menubar.QueryAll.Enable( show )  
+        zm = self.Main_Frame_Menubar
+    
     def OnFileRClick(self, event):
     
         self.currentItemF = self.file_list.GetFirstSelected()
@@ -320,7 +332,10 @@ class IOSb_View(Base_View):
                 self.domain_list.Append(row)  
                 rc += 1      
 
-        print( f'{rc} domains ' )             
+        print( f'{rc} domains ' )        
+
+        self.MenuDisplay( True ) 
+
                  
     def OnEnterQuery(self, event):
         if not hasattr( self, 'Query_Dialog' ) :
