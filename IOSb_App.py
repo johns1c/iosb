@@ -13,6 +13,7 @@ import pprint
 import wx
 from IOSb_Base import IOSb_View as Base_View 
 from IOSb_Base import IOSb_Open as Base_Open 
+from IOSb_Base import IOSb_Query as Base_Query
 from biplist import *
 import hashlib
 
@@ -24,6 +25,8 @@ class IOSb_View(Base_View):
     
         Base_View.__init__(self, *args, **kwds)
         self.SetTitle("IOS Backup viewer")
+        self.Query_Status = None 
+
         #self.window_1 = DomainList(self, wx.ID_ANY)
         #self.window_2 = FileList(self, wx.ID_ANY)
         #self.window_3 = IOSb_File_Properties(self, wx.ID_ANY)
@@ -172,7 +175,7 @@ class IOSb_View(Base_View):
                 self.file_list.Append(display_row) 
 
         
-    def DoRead( self , bkup ) :
+    def DoRead( self , bkup , apply_query=False  ) :
         self.Directory_text.SetLabelText( bkup) 
 
         print ( 'Now...' )      
@@ -187,10 +190,10 @@ class IOSb_View(Base_View):
             entries  = 0
             domains = set()
             for file_info in read_mbdb( self.old_manifest ) :  
-                if entries == 123 :
-                     print(  file_info )
-                domains.add( file_info['domain' ] )
-                entries += 1 
+            
+                if (not apply_query) or  like(file_info['domain' ]  , self.domain_filter ) :
+                    domains.add( file_info['domain' ] )
+                    entries += 1 
                 
             print( f'{entries=}   {len(domains)=}') 
                 
@@ -202,9 +205,15 @@ class IOSb_View(Base_View):
         elif os.path.exists( self.manifest) :
             self.db = sqlite3.connect(self.manifest)
             #db.create_function("part1", 1, part1)
-            qry = 'select distinct domain from files order by 1 ; '
+            if apply_query :
+                qry = 'select distinct domain from files where domain like ? order by 1 ; '
+                qry_bind_vars = ( self.domain_filter , ) 
+            else :
+                qry = 'select distinct domain from files order by 1 ; '
+                qry_bind_vars = tuple() 
+            
             cur = self.db.cursor()
-            cur.execute(qry) 
+            cur.execute(qry,qry_bind_vars ) 
             
             rc = 0    
             for row in cur.fetchall() :
@@ -213,14 +222,48 @@ class IOSb_View(Base_View):
 
         print( f'{rc} domains ' )             
                  
-            
-        #import pdb
-        #pdb.set_trace()        
-            
-        # pull sample file 
-
+    def OnEnterQuery(self, event):
+        if not hasattr( self, 'Query_Dialog' ) :
+            self.Query_Dialog = IOSb_Query(None, 150) 
+        self.Query_Dialog.domain_text.Value      = '%'
+        self.Query_Dialog.file_name_text.Value   = '%'
+        self.Query_Dialog.Show(True)
+        self.Query_Status = 'prompt' 
+        event.Skip()
         
-
+    def OnCnclQuery(self, event):
+        if hasattr( self, 'Query_Dialog' ) :
+            self.Query_Dialog.Hide() 
+            self.Query_Status = 'cancelled' 
+            
+            
+    def OnLastQuery( self , event) :
+    
+        try:
+            self.Query_Dialog.domain_text.Value      =  self.domain_filter
+            self.Query_Dialog.file_name_text.Value   =  self.file_name_filter
+            self.Query_Dialog.Show(True)
+            self.Query_Status = 'prompt' 
+        except AttributeError :
+            pass        
+        finally :
+            event.Skip()
+    
+             
+    def OnRunQuery( self, event )    :        
+        try :          
+            if self.Query_Status != 'prompt' :
+                return
+            self.domain_filter    = self.Query_Dialog.domain_text.Value    
+            self.file_name_filter = self.Query_Dialog.file_name_text.Value
+            self.DoRead( self.backup , apply_query=True ) 
+            print( 'execute query has set filters - now read the manifestd ' )             
+        except AttributeError :
+            print( 'some error picking up filter vars ' ) 
+        finally :
+            event.Skip()
+    
+    
     def DoExport(self, event):
         print("Overridden Event handler 'DoExport' not implemented!")
         event.Skip()
@@ -238,7 +281,18 @@ class IOSb_View(Base_View):
     def DoHelp(self, event):
         print("Overridden Event handler 'DoHelp' not implemented!")
         event.Skip()
-
+      
+        
+class IOSb_Query(Base_Query):       
+    def __init__(self, *args, **kwds):
+        kwds["style"] = kwds.get("style", 0) | wx.CAPTION | wx.CLOSE_BOX | wx.MAXIMIZE_BOX | wx.MINIMIZE_BOX | wx.RESIZE_BORDER | wx.STAY_ON_TOP
+        Base_Query.__init__(self, *args, **kwds)
+        
+    def Do_Query_ok(self, event):
+        # just call execute query handler         
+        zapp = wx.GetApp() 
+        zview = zapp.GetTopWindow() 
+        zview.OnRunQuery( event ) 
 
 class IOSb_Open(Base_Open):
     def __init__(self, *args, **kwds):
